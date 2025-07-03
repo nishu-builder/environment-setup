@@ -31,13 +31,22 @@ A collection of tools and configurations for an enhanced development environment
 
 4. Configure Starship (add to `~/.config/starship.toml`):
    ```toml
-   # Add at the beginning of the file
-   format = """
-   ${custom.worktree}\
-   $all
-   """
-
-   # Add at the end of the file
+   # Custom format
+   format = """${custom.worktree}${directory}${character}"""
+   
+   [custom.git_repo_name]
+   command = '''
+   if git rev-parse --git-dir >/dev/null 2>&1; then
+       # Get the repository name
+       repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
+       if [[ -n "$repo_root" ]]; then
+           echo "${repo_root##*/}"
+       fi
+   fi
+   '''
+   when = 'git rev-parse --git-dir >/dev/null 2>&1'
+   format = ' [$output](bold white)'
+   
    [custom.worktree]
    command = '''
    if [[ -n "$WORKTREE_COLOR" ]]; then
@@ -45,8 +54,8 @@ A collection of tools and configurations for an enhanced development environment
    fi
    '''
    when = 'git rev-parse --git-dir >/dev/null 2>&1'
-   format = '[$output ](bold)'
-   '''
+   format = ' [$output ](bold)'
+   disabled = false
    ```
 
 4. Reload your shell:
@@ -56,32 +65,31 @@ A collection of tools and configurations for an enhanced development environment
 
 ## Commands
 
-### `wl` - List Worktrees
-Shows all worktrees with their assigned color indicators.
+### `wg` - List or Go to Worktree
+Without arguments, lists all worktrees. With an argument, switches to that worktree.
 
 ```bash
-wl
+# List all worktrees
+wg
 # Output:
 # 🌳 Git Worktrees:
-#     🏠 my-project [main] ⟵ current
-#     🔴 my-project-feature-auth [feature-auth]
-#     🟡 my-project-bugfix-login [bugfix-login]
+#     🏠 main                         
+#     🔴 feature-auth                 
+#     🟡 bugfix-login                 
+
+# Go to a worktree
+wg feature-auth  # Switches to feature-auth worktree
+wg main          # Goes back to main
 ```
 
 ### `wn <branch-name>` - New Worktree
-Creates a new worktree with automatic color assignment.
+Creates a new worktree with automatic color assignment and runs `uv sync`.
 
 ```bash
 wn feature-payments
-# Creates ../my-project-feature-payments with 🟢 indicator
-```
-
-### `wg <name>` - Go to Worktree
-Switches to a worktree by name (partial matching supported).
-
-```bash
-wg payments  # Goes to my-project-feature-payments
-wg main      # Goes back to main
+# Creates worktree at ../my-project/feature-payments
+# Assigns color 🟢
+# Runs uv sync to install dependencies
 ```
 
 ### `wr <name>` - Remove Worktree
@@ -103,8 +111,9 @@ wr --clean
 
 1. **Color Assignment**: Each branch gets a unique colored emoji (🔴 🟠 🟡 🟢 🔵 🟣 etc.) that persists across sessions
 2. **Environment Variables**: Sets `WORKTREE_COLOR` and `WORKTREE_BRANCH` that Starship can read
-3. **Persistence**: Colors are stored in `.worktree-colors` in your repo root (add to `.gitignore`)
-4. **IDE Integration**: Automatically updates Cursor/VS Code workspace files
+3. **Persistence**: Colors are stored in `~/.config/worktree/{repo-name}/.worktree-colors`
+4. **IDE Integration**: Automatically updates Cursor/VS Code workspace files and creates `.vscode/settings.local.json`
+5. **Python Environment**: Runs `uv sync` when creating worktrees and configures VS Code to use the local `.venv`
 
 ## Configuration
 
@@ -116,14 +125,12 @@ Edit `~/.config/worktree/config.zsh` to customize:
 # Workspace file pattern (e.g., "*.code-workspace", "myproject.code-workspace")
 export WORKTREE_WORKSPACE_PATTERN="*.code-workspace"
 
-# Worktree naming pattern
-# {repo} = repository name, {branch} = branch name
-export WORKTREE_NAME_PATTERN="{repo}-{branch}"
-
-# Parent directory for worktrees
-# "." = sibling directories (default)
-# "$HOME/worktrees" = specific directory
-export WORKTREE_PARENT_DIR="."
+# Worktree structure - how to organize worktrees
+# "repo-subdir" = branches in repo subdirectory (/path/to/repo/branch-name)
+# "sibling" = branches as siblings (/path/to/repo-branch-name)
+# "nephew" = branches in WORKTREE directory (/path/to/repo-WORKTREE/branch-name)
+# "pattern:{pattern}" = custom pattern using {repo} and {branch}
+export WORKTREE_STRUCTURE="repo-subdir"
 
 # IDE command (e.g., "cursor", "code", "" for none)
 export WORKTREE_IDE_COMMAND="cursor"
@@ -134,39 +141,50 @@ export WORKTREE_IDE_OPTIONS="--reuse-window"
 
 ### Examples
 
-For a project structure like:
+**Repo Subdirectory Structure** (default):
 ```
 ~/projects/
   myapp/          (main repo)
-  myapp-feature/  (worktree)
-  myapp-bugfix/   (worktree)
+  myapp/
+    feature-auth/ (worktree)
+    bugfix-login/ (worktree)
 ```
+Use: `export WORKTREE_STRUCTURE="repo-subdir"`
 
-Use:
-```bash
-export WORKTREE_NAME_PATTERN="{repo}-{branch}"
-export WORKTREE_PARENT_DIR="."
+**Sibling Structure**:
 ```
+~/projects/
+  myapp/              (main repo)
+  myapp-feature-auth/ (worktree)
+  myapp-bugfix-login/ (worktree)
+```
+Use: `export WORKTREE_STRUCTURE="sibling"`
 
-For a centralized worktree directory:
+**Nephew Structure**:
 ```
-~/code/myapp/     (main repo)
+~/projects/
+  myapp/              (main repo)
+  myapp-WORKTREE/
+    feature-auth/     (worktree)
+    bugfix-login/     (worktree)
+```
+Use: `export WORKTREE_STRUCTURE="nephew"`
+
+**Custom Pattern**:
+```
+~/projects/myapp/        (main repo)
 ~/worktrees/
-  myapp-feature/  (worktree)
-  myapp-bugfix/   (worktree)
+  myapp-feature-auth/    (worktree)
+  myapp-bugfix-login/    (worktree)
 ```
-
-Use:
-```bash
-export WORKTREE_NAME_PATTERN="{repo}-{branch}"
-export WORKTREE_PARENT_DIR="$HOME/worktrees"
-```
+Use: `export WORKTREE_STRUCTURE="pattern:$HOME/worktrees/{repo}-{branch}"`
 
 ### Git Configuration
 
-Add `.worktree-colors` to your global gitignore:
+For VS Code local settings, add to your project's `.gitignore`:
 
 ```bash
-echo ".worktree-colors" >> ~/.gitignore_global
-git config --global core.excludesfile ~/.gitignore_global
+echo ".vscode/settings.local.json" >> .gitignore
 ```
+
+This ensures that worktree-specific VS Code settings aren't committed to the repository.

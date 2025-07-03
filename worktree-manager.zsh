@@ -1,7 +1,38 @@
 #!/usr/bin/env zsh
 
 # Git Worktree Manager with Starship Integration
-# Commands: wl (list), wn (new), wg (go), wr (remove)
+# Commands: wg (list/go), wn (new), wr (remove)
+# 
+# Color assignments stored in: ~/.config/worktree/{repo-name}/.worktree-colors
+# Local VS Code settings in: .vscode/settings.local.json (add to .gitignore)
+#
+# Starship Integration - Add to ~/.config/starship.toml:
+# 
+# # Custom format
+# format = """${custom.worktree}${directory}${character}"""
+# 
+# [custom.git_repo_name]
+# command = '''
+# if git rev-parse --git-dir >/dev/null 2>&1; then
+#     # Get the repository name
+#     repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
+#     if [[ -n "$repo_root" ]]; then
+#         echo "${repo_root##*/}"
+#     fi
+# fi
+# '''
+# when = 'git rev-parse --git-dir >/dev/null 2>&1'
+# format = ' [$output](bold white)'
+# 
+# [custom.worktree]
+# command = '''
+# if [[ -n "$WORKTREE_COLOR" ]]; then
+#     echo "$WORKTREE_COLOR"
+# fi
+# '''
+# when = 'git rev-parse --git-dir >/dev/null 2>&1'
+# format = ' [$output ](bold)'
+# disabled = false
 
 # Load configuration
 if [[ -f "$HOME/.config/worktree/config.zsh" ]]; then
@@ -10,6 +41,7 @@ fi
 
 # Set defaults if not configured
 : ${WORKTREE_WORKSPACE_PATTERN:="*.code-workspace"}
+: ${WORKTREE_STRUCTURE:="sibling"}  # Default to old behavior
 : ${WORKTREE_NAME_PATTERN:="{repo}-{branch}"}
 : ${WORKTREE_PARENT_DIR:="."}
 : ${WORKTREE_IDE_COMMAND:=""}
@@ -29,10 +61,31 @@ get_repo_root() {
     git rev-parse --show-toplevel 2>/dev/null
 }
 
+# Get main repo name (consistent across all worktrees)
+get_main_repo_name() {
+    local current_root=$(get_repo_root)
+    if [[ -z "$current_root" ]]; then
+        return 1
+    fi
+    
+    # Check if we're in a worktree or the main repo
+    local git_dir=$(git rev-parse --git-dir 2>/dev/null)
+    if [[ "$git_dir" =~ \.git/worktrees/ ]]; then
+        # We're in a worktree, extract main repo path
+        local main_git_dir="${git_dir%%/.git/worktrees/*}/.git"
+        local main_repo_path=$(cd "$main_git_dir/.." && pwd)
+        echo "${main_repo_path##*/}"
+    else
+        # We're in the main repo
+        echo "${current_root##*/}"
+    fi
+}
+
 # Get color for branch (persistent storage)
 get_worktree_color() {
     local branch="$1"
-    local repo_root=$(get_repo_root)
+    local repo_name=$(get_main_repo_name)
+    local colors_file="$HOME/.config/worktree/$repo_name/.worktree-colors"
     
     # Special case for main/master
     if [[ "$branch" == "main" || "$branch" == "master" ]]; then
@@ -41,8 +94,8 @@ get_worktree_color() {
     fi
     
     # Check if color already assigned
-    if [[ -f "$repo_root/.worktree-colors" ]]; then
-        local color=$(grep "^$branch=" "$repo_root/.worktree-colors" 2>/dev/null | cut -d'=' -f2)
+    if [[ -f "$colors_file" ]]; then
+        local color=$(grep "^$branch=" "$colors_file" 2>/dev/null | cut -d'=' -f2)
         if [[ -n "$color" ]]; then
             echo "$color"
             return
@@ -56,16 +109,19 @@ get_worktree_color() {
 # Assign color to branch
 assign_color() {
     local branch="$1"
-    local repo_root=$(get_repo_root)
+    local repo_name=$(get_main_repo_name)
+    local colors_dir="$HOME/.config/worktree/$repo_name"
+    local colors_file="$colors_dir/.worktree-colors"
     
-    # Create colors file if doesn't exist
-    [[ ! -f "$repo_root/.worktree-colors" ]] && touch "$repo_root/.worktree-colors"
+    # Create colors directory and file if doesn't exist
+    [[ ! -d "$colors_dir" ]] && mkdir -p "$colors_dir"
+    [[ ! -f "$colors_file" ]] && touch "$colors_file"
     
     # Get list of used colors
     local used_colors=()
     while IFS='=' read -r b c; do
         [[ -n "$c" ]] && used_colors+=("$c")
-    done < "$repo_root/.worktree-colors" 2>/dev/null
+    done < "$colors_file" 2>/dev/null
     
     # Find first unused color
     local assigned_color=""
@@ -80,18 +136,19 @@ assign_color() {
     [[ -z "$assigned_color" ]] && assigned_color="${WORKTREE_COLORS[1]}"
     
     # Save assignment
-    echo "$branch=$assigned_color" >> "$repo_root/.worktree-colors"
+    echo "$branch=$assigned_color" >> "$colors_file"
     echo "$assigned_color"
 }
 
 # Release color when branch is removed
 release_color() {
     local branch="$1"
-    local repo_root=$(get_repo_root)
+    local repo_name=$(get_main_repo_name)
+    local colors_file="$HOME/.config/worktree/$repo_name/.worktree-colors"
     
-    if [[ -f "$repo_root/.worktree-colors" ]]; then
-        grep -v "^$branch=" "$repo_root/.worktree-colors" > "$repo_root/.worktree-colors.tmp" 2>/dev/null
-        mv "$repo_root/.worktree-colors.tmp" "$repo_root/.worktree-colors"
+    if [[ -f "$colors_file" ]]; then
+        grep -v "^$branch=" "$colors_file" > "$colors_file.tmp" 2>/dev/null
+        mv "$colors_file.tmp" "$colors_file"
     fi
 }
 
@@ -114,137 +171,43 @@ update_worktree_env() {
     fi
 }
 
-# wl - List worktrees with colors
-wl() {
-    echo "🌳 Git Worktrees:"
-    echo ""
-    
-    local current_path=$(get_repo_root)
-    
-    git worktree list | while IFS= read -r line; do
-        wt_path="${line%% *}"
-        dirname="${wt_path##*/}"
-        branch="${line##*\[}"
-        branch="${branch%\]}"
-        
-        # Handle prunable worktrees
-        branch="${branch% prunable}"
-        
-        # Get persistent color for this branch
-        color=$(get_worktree_color "$branch")
-        if [[ -z "$color" ]] && [[ "$branch" != "main" ]] && [[ "$branch" != "master" ]]; then
-            color="🌿"  # Default for branches without assigned colors
-        fi
-        
-        # Mark current
-        marker=""
-        if [[ "$wt_path" == "$current_path" ]]; then
-            marker=" ⟵ current"
-        fi
-        
-        # Check if prunable
-        if [[ "$line" =~ "prunable" ]]; then
-            marker="$marker (prunable)"
-        fi
-        
-        printf "    %s %-30s [%s]%s\n" "$color" "$dirname" "$branch" "$marker"
-    done
-}
-
-# wn - Create new worktree
-wn() {
-    if [[ -z "$1" ]]; then
-        echo "Usage: wn <branch-name>"
-        return 1
-    fi
-    
-    local branch_name="$1"
-    local clean_name="${branch_name#*-}"  # Remove prefix if present
-    local repo_root=$(get_repo_root)
-    local repo_name="${repo_root##*/}"
-    
-    # Build worktree directory name from pattern
-    local worktree_name="${WORKTREE_NAME_PATTERN//\{repo\}/$repo_name}"
-    worktree_name="${worktree_name//\{branch\}/$clean_name}"
-    
-    # Determine parent directory
-    local parent_dir="$WORKTREE_PARENT_DIR"
-    if [[ "$parent_dir" == "." ]]; then
-        parent_dir="$(dirname "$repo_root")"
-    fi
-    local worktree_dir="$parent_dir/$worktree_name"
-    
-    # Find workspace file using pattern
-    local workspace_file=""
-    if [[ -n "$WORKTREE_WORKSPACE_PATTERN" ]]; then
-        workspace_file=$(find "$repo_root" -maxdepth 1 -name "$WORKTREE_WORKSPACE_PATTERN" | head -1)
-    fi
-    
-    # Assign color to new branch
-    local color=$(assign_color "$clean_name")
-    
-    echo "🌳 Creating worktree: $clean_name"
-    echo "🎨 Color: $color"
-    
-    # Create worktree
-    git worktree add -b "$clean_name" "$worktree_dir" || return 1
-    
-    # Create .vscode settings
-    mkdir -p "$worktree_dir/.vscode"
-    cat > "$worktree_dir/.vscode/settings.json" << EOF
-{
-    "window.title": "$color $clean_name - \${folderName}",
-    "cmake.configureOnOpen": false,
-    "cmake.automaticReconfigure": false,
-    "cmake.configureOnEdit": false
-}
-EOF
-    
-    # Update workspace file if it exists
-    if [[ -f "$workspace_file" ]]; then
-        echo "📂 Updating Cursor/VS Code workspace..."
-        
-        python3 -c "
-import json
-with open('$workspace_file', 'r') as f:
-    ws = json.load(f)
-ws['folders'].append({
-    'name': '$color $clean_name',
-    'path': '$worktree_dir'
-})
-with open('$workspace_file', 'w') as f:
-    json.dump(ws, f, indent='\t')
-print('✅ Workspace updated')
-" 2>/dev/null || echo "⚠️  Could not update workspace file"
-    fi
-    
-    # Go to the new worktree
-    cd "$worktree_dir"
-    update_worktree_env  # Set env vars for Starship
-    
-    echo ""
-    echo "✅ Created at: $worktree_dir"
-    echo ""
-    
-    # Try to open in IDE if configured
-    if [[ -n "$WORKTREE_IDE_COMMAND" ]] && command -v "$WORKTREE_IDE_COMMAND" >/dev/null 2>&1; then
-        if [[ -n "$workspace_file" ]]; then
-            echo "📂 Opening in $WORKTREE_IDE_COMMAND..."
-            $WORKTREE_IDE_COMMAND $WORKTREE_IDE_OPTIONS "$workspace_file" 2>/dev/null
-        else
-            echo "📂 Opening directory in $WORKTREE_IDE_COMMAND..."
-            $WORKTREE_IDE_COMMAND $WORKTREE_IDE_OPTIONS "$worktree_dir" 2>/dev/null
-        fi
-    fi
-}
-
-# wg - Go to worktree
+# wg - Go to worktree (or list if no arguments)
 wg() {
     if [[ -z "$1" ]]; then
-        echo "Usage: wg <worktree-name>"
-        echo ""
-        wl
-        return 1
+        # List worktrees when no argument provided
+        local current_path=$(get_repo_root)
+        
+        git worktree list | while IFS= read -r line; do
+            wt_path="${line%% *}"
+            dirname="${wt_path##*/}"
+            branch="${line##*\[}"
+            branch="${branch%\]}"
+            
+            # Handle prunable worktrees
+            branch="${branch% prunable}"
+            
+            # Get persistent color for this branch
+            color=$(get_worktree_color "$branch")
+            if [[ -z "$color" ]] && [[ "$branch" != "main" ]] && [[ "$branch" != "master" ]]; then
+                color="🌿"  # Default for branches without assigned colors
+            fi
+            
+            # Format directory name with bold light blue if current
+            local formatted_dirname="$dirname"
+            local marker=""
+            if [[ "$wt_path" == "$current_path" ]]; then
+                formatted_dirname=$'\033[1;36m'"$dirname"$'\033[0m'
+            fi
+            
+            # Check if prunable
+            if [[ "$line" =~ "prunable" ]]; then
+                marker=" (prunable)"
+            fi
+            
+            # Since worktree name and branch are now the same, just show directory
+            printf "    %s %-30s%s\n" "$color" "$formatted_dirname" "$marker"
+        done
+        return 0
     fi
     
     local target="$1"
@@ -269,10 +232,148 @@ wg() {
     else
         echo "❌ Worktree not found: $target"
         echo ""
-        wl
+        wg  # List worktrees on error
         return 1
     fi
 }
+
+# wn - Create new worktree
+wn() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: wn <branch-name>"
+        return 1
+    fi
+    
+    local branch_name="$1"
+    local repo_root=$(get_repo_root)
+    local repo_name=$(get_main_repo_name)
+    
+    # Determine worktree directory based on structure setting
+    local worktree_dir
+    case "$WORKTREE_STRUCTURE" in
+        "repo-subdir")
+            # Branches in repo subdirectory: /path/to/repo/branch-name
+            worktree_dir="$repo_root/../$repo_name/$branch_name"
+            ;;
+        "sibling")
+            # Branches as siblings: /path/to/repo-branch-name
+            worktree_dir="$repo_root/../$repo_name-$branch_name"
+            ;;
+        "nephew")
+            # Branches in WORKTREE directory: /path/to/repo-WORKTREE/branch-name
+            worktree_dir="$repo_root/../$repo_name-WORKTREE/$branch_name"
+            ;;
+        pattern:*)
+            # Custom pattern
+            local pattern="${WORKTREE_STRUCTURE#pattern:}"
+            worktree_dir="${pattern//\{repo\}/$repo_name}"
+            worktree_dir="${worktree_dir//\{branch\}/$branch_name}"
+            # Handle relative paths
+            if [[ "$worktree_dir" != /* ]]; then
+                worktree_dir="$repo_root/../$worktree_dir"
+            fi
+            ;;
+        *)
+            # Fallback to legacy behavior
+            local worktree_name="${WORKTREE_NAME_PATTERN//\{repo\}/$repo_name}"
+            worktree_name="${worktree_name//\{branch\}/$branch_name}"
+            local parent_dir="$WORKTREE_PARENT_DIR"
+            if [[ "$parent_dir" == "." ]]; then
+                parent_dir="$(dirname "$repo_root")"
+            fi
+            worktree_dir="$parent_dir/$worktree_name"
+            ;;
+    esac
+    
+    # Find workspace file using pattern
+    local workspace_file=""
+    if [[ -n "$WORKTREE_WORKSPACE_PATTERN" ]]; then
+        workspace_file=$(find "$repo_root" -maxdepth 1 -name "$WORKTREE_WORKSPACE_PATTERN" | head -1)
+        if [[ -n "$workspace_file" ]]; then
+            echo "🔍 Found workspace file: $workspace_file"
+        else
+            echo "⚠️  No workspace file matching pattern: $WORKTREE_WORKSPACE_PATTERN"
+        fi
+    fi
+    
+    # Assign color to new branch
+    local color=$(assign_color "$branch_name")
+    
+    echo "🌳 Creating worktree: $branch_name"
+    echo "🎨 Color: $color"
+    
+    # Create parent directory if needed
+    mkdir -p "$(dirname "$worktree_dir")"
+    
+    # Create worktree
+    git worktree add -b "$branch_name" "$worktree_dir" || return 1
+    
+    # Create .vscode local settings (not tracked by git)
+    mkdir -p "$worktree_dir/.vscode"
+    cat > "$worktree_dir/.vscode/settings.local.json" << EOF
+{
+    "window.title": "$color $branch_name - \${folderName}",
+    "cmake.configureOnOpen": false,
+    "cmake.automaticReconfigure": false,
+    "cmake.configureOnEdit": false,
+    "python.defaultInterpreterPath": "\${workspaceFolder}/.venv/bin/python",
+    "python.terminal.activateEnvironment": true
+}
+EOF
+    
+    # Update workspace file if it exists
+    if [[ -f "$workspace_file" ]]; then
+        echo "📂 Updating Cursor/VS Code workspace..."
+        
+        python3 -c "
+import json
+import sys
+try:
+    with open('$workspace_file', 'r') as f:
+        ws = json.load(f)
+    
+    # Check if folder already exists
+    existing = [f for f in ws['folders'] if f.get('path') == '$worktree_dir']
+    if existing:
+        print('⚠️  Worktree already in workspace')
+        sys.exit(0)
+    
+    ws['folders'].append({
+        'name': '$color $branch_name',
+        'path': '$worktree_dir'
+    })
+    
+    with open('$workspace_file', 'w') as f:
+        json.dump(ws, f, indent='\t')
+    
+    print('✅ Added to workspace: $color $branch_name')
+    print('📁 Total folders in workspace:', len(ws['folders']))
+except Exception as e:
+    print('❌ Error updating workspace:', str(e))
+    sys.exit(1)
+" || echo "⚠️  Could not update workspace file"
+    fi
+    
+    # Go to the new worktree
+    cd "$worktree_dir"
+    update_worktree_env  # Set env vars for Starship
+    
+    # Run uv sync if uv is available
+    if command -v uv >/dev/null 2>&1; then
+        echo ""
+        echo "🔄 Running uv sync..."
+        if uv sync; then
+            echo "✅ Dependencies synced"
+        else
+            echo "⚠️  uv sync failed, but continuing..."
+        fi
+    fi
+    
+    echo ""
+    echo "✅ Created at: $worktree_dir"
+    echo ""
+}
+
 
 # wr - Remove worktree (with --clean option)
 wr() {
@@ -334,7 +435,7 @@ wr() {
     local branch="$1"
     local worktree_path
     local repo_root=$(get_repo_root)
-    local repo_name="${repo_root##*/}"
+    local repo_name=$(get_main_repo_name)
     
     # Find the worktree
     while IFS= read -r line; do
@@ -366,6 +467,7 @@ with open('$workspace_file', 'w') as f:
 " 2>/dev/null
         fi
         
+        
         # Release color assignment
         release_color "$branch"
         
@@ -388,6 +490,3 @@ fi
 
 # Initialize on load
 update_worktree_env
-
-# Print usage on load
-echo "🌳 Worktree Manager loaded: wl, wn, wg, wr"
