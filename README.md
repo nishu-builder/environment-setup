@@ -66,20 +66,25 @@ A collection of tools and configurations for an enhanced development environment
 ## Commands
 
 ### `wg` - List or Go to Worktree
-Without arguments, lists all worktrees. With an argument, switches to that worktree.
+Without arguments, lists all worktrees. With an argument, switches to that worktree. If the worktree doesn't exist, it offers to create it.
 
 ```bash
 # List all worktrees
 wg
 # Output:
-# 🌳 Git Worktrees:
+# Git Worktrees:
 #     🏠 main                         
 #     🔴 feature-auth                 
 #     🟡 bugfix-login                 
 
-# Go to a worktree
+# Go to a worktree (with tab completion support)
 wg feature-auth  # Switches to feature-auth worktree
+wg feat<TAB>     # Tab completes to feature-auth
 wg main          # Goes back to main
+
+# Create if doesn't exist
+wg new-feature   # Prompts to create if not found
+wg -c new-feature # Creates without prompting
 ```
 
 ### `wn <branch-name>` - New Worktree

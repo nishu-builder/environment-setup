@@ -49,12 +49,11 @@ fi
 
 # Color palette for worktree indicators
 WORKTREE_COLORS=(
-    "🔴" "🟠" "🟡" "🟢" "🔵" "🟣" "🟤"
-    "🟥" "🟧" "🟨" "🟩" "🟦" "🟪" "🟫"
-    "🔶" "🔷" "❤️" "💛" "💚" "💙" "💜"
+    "🟠" "🟡" "🟢" "🔵" "🟣"
+    "🟧" "🟨" "🟩" "🟦" "🟪"
 )
 
-MAIN_INDICATOR="🏠"
+MAIN_INDICATOR="◻️"
 
 # Get repo root safely
 get_repo_root() {
@@ -173,6 +172,13 @@ update_worktree_env() {
 
 # wg - Go to worktree (or list if no arguments)
 wg() {
+    # Check for -c flag (create if not exists)
+    local create_if_missing=false
+    if [[ "$1" == "-c" ]]; then
+        create_if_missing=true
+        shift
+    fi
+    
     if [[ -z "$1" ]]; then
         # List worktrees when no argument provided
         local current_path=$(get_repo_root)
@@ -189,7 +195,7 @@ wg() {
             # Get persistent color for this branch
             color=$(get_worktree_color "$branch")
             if [[ -z "$color" ]] && [[ "$branch" != "main" ]] && [[ "$branch" != "master" ]]; then
-                color="🌿"  # Default for branches without assigned colors
+                color="[*]"  # Default for branches without assigned colors
             fi
             
             # Format directory name with bold light blue if current
@@ -226,14 +232,27 @@ wg() {
     done < <(git worktree list)
     
     if [[ -n "$worktree_path" && -d "$worktree_path" ]]; then
-        echo "📂 Going to: ${worktree_path##*/}"
+        echo "-> Going to: ${worktree_path##*/}"
         cd "$worktree_path"
         update_worktree_env  # Update env vars for Starship
     else
-        echo "❌ Worktree not found: $target"
-        echo ""
-        wg  # List worktrees on error
-        return 1
+        if [[ "$create_if_missing" == true ]]; then
+            # Create without asking
+            echo "Worktree '$target' not found - creating it..."
+            wn "$target"
+        else
+            echo "Worktree '$target' not found"
+            echo ""
+            # Ask if user wants to create it
+            echo -n "Would you like to create a new worktree '$target'? [Y/n] "
+            read -r response
+            if [[ -z "$response" || "$response" =~ ^[Yy]$ ]]; then
+                wn "$target"
+            else
+                echo "Cancelled"
+                return 1
+            fi
+        fi
     fi
 }
 
@@ -290,17 +309,17 @@ wn() {
     if [[ -n "$WORKTREE_WORKSPACE_PATTERN" ]]; then
         workspace_file=$(find "$repo_root" -maxdepth 1 -name "$WORKTREE_WORKSPACE_PATTERN" | head -1)
         if [[ -n "$workspace_file" ]]; then
-            echo "🔍 Found workspace file: $workspace_file"
+            echo "Found workspace file: $workspace_file"
         else
-            echo "⚠️  No workspace file matching pattern: $WORKTREE_WORKSPACE_PATTERN"
+            echo "Warning: No workspace file matching pattern: $WORKTREE_WORKSPACE_PATTERN"
         fi
     fi
     
     # Assign color to new branch
     local color=$(assign_color "$branch_name")
     
-    echo "🌳 Creating worktree: $branch_name"
-    echo "🎨 Color: $color"
+    echo "Creating worktree: $branch_name"
+    echo "Color: $color"
     
     # Create parent directory if needed
     mkdir -p "$(dirname "$worktree_dir")"
@@ -323,7 +342,7 @@ EOF
     
     # Update workspace file if it exists
     if [[ -f "$workspace_file" ]]; then
-        echo "📂 Updating Cursor/VS Code workspace..."
+        echo "Updating Cursor/VS Code workspace..."
         
         python3 -c "
 import json
@@ -335,7 +354,7 @@ try:
     # Check if folder already exists
     existing = [f for f in ws['folders'] if f.get('path') == '$worktree_dir']
     if existing:
-        print('⚠️  Worktree already in workspace')
+        print('Warning: Worktree already in workspace')
         sys.exit(0)
     
     ws['folders'].append({
@@ -346,12 +365,12 @@ try:
     with open('$workspace_file', 'w') as f:
         json.dump(ws, f, indent='\t')
     
-    print('✅ Added to workspace: $color $branch_name')
-    print('📁 Total folders in workspace:', len(ws['folders']))
+    print('Added to workspace: $color $branch_name')
+    print('Total folders in workspace:', len(ws['folders']))
 except Exception as e:
-    print('❌ Error updating workspace:', str(e))
+    print('Error updating workspace:', str(e))
     sys.exit(1)
-" || echo "⚠️  Could not update workspace file"
+" || echo "Warning: Could not update workspace file"
     fi
     
     # Go to the new worktree
@@ -361,16 +380,16 @@ except Exception as e:
     # Run uv sync if uv is available
     if command -v uv >/dev/null 2>&1; then
         echo ""
-        echo "🔄 Running uv sync..."
+        echo "Running uv sync..."
         if uv sync; then
-            echo "✅ Dependencies synced"
+            echo "Dependencies synced"
         else
-            echo "⚠️  uv sync failed, but continuing..."
+            echo "Warning: uv sync failed, but continuing..."
         fi
     fi
     
     echo ""
-    echo "✅ Created at: $worktree_dir"
+    echo "Created at: $worktree_dir"
     echo ""
 }
 
@@ -379,7 +398,7 @@ except Exception as e:
 wr() {
     # Handle --clean option
     if [[ "$1" == "--clean" ]]; then
-        echo "🧹 Cleaning stale worktrees..."
+        echo "Cleaning stale worktrees..."
         echo ""
         
         local cleaned=0
@@ -404,7 +423,7 @@ wr() {
                     # No upstream - check if branch exists on any remote
                     local on_remote=$(cd "$wt_path" && git ls-remote --heads origin "$branch" 2>/dev/null)
                     if [[ -z "$on_remote" ]]; then
-                        echo "  🗑️  Removing $branch (never pushed)..."
+                        echo "  Removing $branch (never pushed)..."
                         wr "$branch"
                         ((cleaned++))
                     fi
@@ -412,7 +431,7 @@ wr() {
                     # Has upstream - check if fully merged
                     local ahead=$(cd "$wt_path" && git rev-list --count "@{upstream}..HEAD" 2>/dev/null || echo "0")
                     if [[ "$ahead" == "0" ]]; then
-                        echo "  🗑️  Removing $branch (fully merged)..."
+                        echo "  Removing $branch (fully merged)..."
                         wr "$branch"
                         ((cleaned++))
                     fi
@@ -421,7 +440,7 @@ wr() {
         done
         
         echo ""
-        echo "✅ Cleaned $cleaned worktrees"
+        echo "Cleaned $cleaned worktrees"
         return 0
     fi
     
@@ -452,7 +471,7 @@ wr() {
     
     if [[ -n "$worktree_path" ]]; then
         local color=$(get_worktree_color "$branch")
-        echo "🗑️  Removing worktree: $color ${worktree_path##*/}"
+        echo "Removing worktree: $color ${worktree_path##*/}"
         
         # Find and update workspace file
         local workspace_file=$(find "$repo_root" -maxdepth 1 -name "*.code-workspace" | head -1)
@@ -475,9 +494,9 @@ with open('$workspace_file', 'w') as f:
         git worktree remove "$worktree_path" --force
         git branch -D "$branch" 2>/dev/null
         
-        echo "✅ Removed worktree and local branch: $branch"
+        echo "Removed worktree and local branch: $branch"
     else
-        echo "❌ Worktree not found: $branch"
+        echo "Error: Worktree not found: $branch"
         return 1
     fi
 }
@@ -490,3 +509,41 @@ fi
 
 # Initialize on load
 update_worktree_env
+
+# Tab completion for wg command
+_wg_completion() {
+    local cur="${COMP_WORDS[COMP_CWORD]}"
+    local worktrees=()
+    
+    # Get list of worktree names
+    while IFS= read -r line; do
+        local wt_path="${line%% *}"
+        local dirname="${wt_path##*/}"
+        worktrees+=("$dirname")
+    done < <(git worktree list 2>/dev/null)
+    
+    # Generate completions
+    COMPREPLY=($(compgen -W "${worktrees[*]}" -- "$cur"))
+}
+
+# ZSH completion
+if [[ -n "$ZSH_VERSION" ]]; then
+    _wg() {
+        local worktrees=()
+        
+        # Get list of worktree names
+        while IFS= read -r line; do
+            local wt_path="${line%% *}"
+            local dirname="${wt_path##*/}"
+            worktrees+=("$dirname")
+        done < <(git worktree list 2>/dev/null)
+        
+        _describe 'worktree' worktrees
+    }
+    compdef _wg wg
+fi
+
+# Bash completion
+if [[ -n "$BASH_VERSION" ]]; then
+    complete -F _wg_completion wg
+fi
