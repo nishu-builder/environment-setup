@@ -1,0 +1,14 @@
+# Worktree color assignments
+.worktree-colors
+
+# macOS
+.DS_Store
+
+# Editor directories
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.swp
+*~

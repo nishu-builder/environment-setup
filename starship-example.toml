@@ -1,0 +1,45 @@
+# Example Starship configuration with worktree indicator
+# Copy relevant parts to your ~/.config/starship.toml
+
+# Define the format - add ${custom.worktree} at the beginning
+format = """
+${custom.worktree}\
+$username\
+$hostname\
+$directory\
+$git_branch\
+$git_state\
+$git_status\
+$git_metrics\
+$fill\
+$nodejs\
+$python\
+$cmd_duration\
+$line_break\
+$jobs\
+$battery\
+$time\
+$status\
+$shell\
+$character"""
+
+# Custom module for worktree color indicator
+[custom.worktree]
+command = '''
+if [[ -n "$WORKTREE_COLOR" ]]; then
+    echo "$WORKTREE_COLOR"
+fi
+'''
+when = 'git rev-parse --git-dir >/dev/null 2>&1'
+format = '[$output ](bold)'
+disabled = false
+
+# Optional: You can also show the branch name with color
+# [custom.worktree_full]
+# command = '''
+# if [[ -n "$WORKTREE_COLOR" ]] && [[ -n "$WORKTREE_BRANCH" ]]; then
+#     echo "$WORKTREE_COLOR $WORKTREE_BRANCH"
+# fi
+# '''
+# when = 'git rev-parse --git-dir >/dev/null 2>&1'
+# format = '[$output](bold) '
